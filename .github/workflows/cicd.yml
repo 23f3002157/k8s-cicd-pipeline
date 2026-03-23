@@ -13,52 +13,70 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - run: pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-      - run: pytest
+      - name: Run tests
+        run: pytest
 
   build-push:
     needs: test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Login to Docker Hub
         run: |
-          echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login \
-            -u ${{ secrets.DOCKERHUB_USERNAME }} \
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
+            -u "${{ secrets.DOCKERHUB_USERNAME }}" \
             --password-stdin
 
-      - name: Build & push
+      - name: Build Docker image
         run: |
           docker build -t $IMAGE:${{ github.sha }} .
+          docker tag $IMAGE:${{ github.sha }} $IMAGE:latest
+
+      - name: Push Docker image
+        run: |
           docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
 
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: azure/setup-kubectl@v3
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
 
       - name: Configure kubeconfig
         run: |
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kube.yaml
+          echo "${{ secrets.KUBECONFIG }}" | base64 --decode > kube.yaml
 
-      - name: Deploy
+      - name: Verify cluster connection
+        run: |
+          kubectl get nodes --kubeconfig=kube.yaml
+
+      - name: Deploy updated image
         run: |
           kubectl set image deployment/flask-app \
             flask=$IMAGE:${{ github.sha }} \
             --kubeconfig=kube.yaml
 
+      - name: Wait for rollout to complete
+        run: |
           kubectl rollout status deployment/flask-app \
             --kubeconfig=kube.yaml
